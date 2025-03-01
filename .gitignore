@@ -1,0 +1,6 @@
+__pycache__/
+*.swp
+*.sage.py
+*.pdf
+.DS_Store
+*.csv
