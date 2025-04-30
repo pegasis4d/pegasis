@@ -1,195 +1,242 @@
-from sage.all import(
-    isqrt, sqrt, floor, prod,
-    randint,
-    log,
-    proof,
-    next_prime,
-    kronecker,
-    GF, ZZ, QQ,
-    Matrix,
-    gcd, xgcd, valuation,
-)
+#!/usr/bin/env python3
 
-from coin import sos_pair_generator, xsos_pair_generator
-from ideals import ideal_to_sage, ShortIdeals
-import time
+from sage.all import proof
+from sage.arith.misc import gcd, valuation
+
+from coin import sos_coins
+from ideals import ideal_to_sage, short_ideals
+from utilities import remove_common_factors
 
 import logging
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.WARNING)
 logger_sh = logging.StreamHandler()
 logger_sh.setLevel(logging.WARNING)
-formatter = logging.Formatter('%(name)s [%(levelname)s] %(message)s')
+formatter = logging.Formatter("%(name)s [%(levelname)s] %(message)s")
 logger_sh.setFormatter(formatter)
 logger.addHandler(logger_sh)
 
 proof.all(False)
 
 
-def generate_combs(n):
+def ascending_combinations(max_norm):
+    """Sequence of distinct non-negative integer pairs in ascending L1-norm up to permutation
+
+    The pairs returned (x, y) satisfy x >= y
+
+    Arguments:
+      - max_norm: Return pairs with L1 norm strictly less than max_norm
+
+    Note: We return pairs with L1-norm up to (but not including) max_norm for compatibility with previous
+    implementatation.
     """
-    Generate pairs (i, j) sorted by L1-norm.
-    """
-    i_start = 1
-    while i_start < n:
-        i = i_start
-        j = 0
-        while i > j:
-            yield i, j
-            j += 1
-            i -= 1
-        i_start += 1
+
+    norm = 0
+    while norm < max_norm:
+        for i in range(norm):
+            # Pair `norm - i, i` has L1-norm `norm`
+            # We want pairs up to permutation, so we only return if `norm - i < i`
+            if norm - i > i:
+                yield norm - i, i
+        norm += 1
 
 
-def eval_sol(vals, allowed_primes):
-    """
-    Given a list vals of Elkies isogenies of degrees contained in
-    allowed_primes, estimate the total cost of such isogeny. The cost of a
-    single step is assumed to be linear in the degree.
-    """
-    costs = {}
-    for li in allowed_primes:
-        cost_li = 0
-        for vi in vals:
-            cost_li += valuation(vi, li)
-        costs[li] = cost_li
+def two_signature(ideal, twoval, uv_params):
+    """Return signature of norm-2-ideals contained in ideal
 
-    return sum(li * costs[li] for li in allowed_primes)
+    Input:
+      - ideal: Ideal as list of generators, where a generator is
+               a pair of numbers [a, b] representing the element a + ib
+      - twoval: The 2-valuation of the norm of the input ideal
+      - uv_params: Instance of uv_params class for ambient order information
 
+    Ouput: Tuple of integers
 
-def UVSolver(R, N_R, uv_params):
+        (left - min(left, right), right - min(left, right))
+
+    Where two_left**left divides ideal and two_right**right divides ideal
+
+    Note: One entry of the output tuple is zero.
     """
-    Given an ideal R try to find two equivalent ideals I_1 and I_2 such that,
+
+    ideal_sage = ideal_to_sage(ideal, uv_params.max_order)
+
+    # Compute common part
+    ideal_common_two_left = ideal_sage + uv_params.two_left**twoval
+    ideal_common_two_right = ideal_sage + uv_params.two_right**twoval
+
+    # Get the power that actually was common
+    twoval_left = valuation(ideal_common_two_left.norm(), 2)
+    twoval_right = valuation(ideal_common_two_right.norm(), 2)
+
+    # Now we know two_left divides ideal twoval_left times (same for right)
+    # If both two_left and two_right divides ideal, then ideal contains the
+    # ideal corresponding to multiplication_by_two
+    # We assume this will be factored later on, so we remove it from our
+    # signature
+    mult_by_two = min(twoval_left, twoval_right)
+
+    return twoval_left - mult_by_two, twoval_right - mult_by_two
+
+
+def UVSolver(ideal, ideal_norm, uv_params):
+    """Solve UV equation for given ideal
+
+    Given an ideal ideal try to find two equivalent ideals I_1 and I_2 such that,
     after writing n(I_1) = N1*cof1 and n(I_2) = N2*cof2 we can solve the
     equation
         u*N1 + v*N2 = 2^e
     for u and v sums of two squares.
 
     Input:
-    - R: the input ideal as a list of generators, where a generator is a pair
-        of numbers [a, b] representing the element a + ib;
-    - N_R: the (ideal) norm of R;
-    - uv_params: an instance of uv_params.UV_params containing the parameters
-      for the algorithm, as described in the UV_params class.
+     - ideal:      the input ideal as sage ideal
+     - ideal_norm: the (ideal) norm of ideal;
+     - uv_params: an instance of uv_params.UV_params containing the parameters
+                  for the algorithm, as described in the UV_params class.
+
+                  Note: e from the 2^e in the norm equation above is given by
+                  uv_params
 
     Output:
-    - u, v, ids[i], ids[j], sig_1, sig_2, t
-    where
-    - u, v are written as (x_u, y_u, g_u) such that g_u*(x_u^2 + y_2^2)=u
-    - ids[i], ids[j] are ideals represented as (norm, cofactor, 2-valuation,
-      gens); norm * cofactor * 2**(2-valuation) is the norm if the ideal
-      generated by gens;
-    - setting n1=ids[i][0], n2 = ids[j][0] (the cofactor-free norms) it holds
-      2**t == u*n1 + v*n2; in general t <= uv_params.e, but they do not need to
-      be equal;
-    - sig_1, sig_2 are the ideals over 2 that are left in ids[i], ids[j]
-      respectively after multiplications by two are removed, as a pair (left,
-      right); one between left and right must be zero; if they point in the
-      same direction (e. g. (e_1, 0) and (e_2, 0)) the algorithm assumes that
-      the common part is computed in advance and removed by the ideals.
-    - if uv_params.n_squares=1, only one among u and v is decomposed as sum of
-      squares
-    """
+      - u, v, I_1, I_2, sig_1, sig_2, t
 
+    where
+      - u, v are written as
+            (x_u, y_u, g_u)
+        such that g_u*(x_u^2 + y_2^2)=u
+
+        Note: if uv_params.n_squares=1, only one among u and v is decomposed as
+        sum of squares.
+
+      - I_1, I_2 are ideals represented as
+            (norm, cofactor, 2-valuation, gens)
+        where
+            norm * cofactor * 2**(2-valuation)
+        is the norm of the ideal generated by gens;
+
+      - setting
+            n1 = I_1[0], n2 = I_2[0] (the cofactor-free norms)
+        it holds
+            2**t == u*n1 + v*n2
+        in general t <= uv_params.e, but they do not need to be equal;
+
+      - sig_1, sig_2 are the ideals over 2 that are left in I_1, I_2
+        respectively after multiplications-by-two are removed, as a pair (left,
+        right).
+
+        One of `left` and `right` must be zero; if they point in the same
+        direction (e. g. (e_1, 0) and (e_2, 0)) the algorithm assumes that the
+        common part is computed in advance and removed by the ideals.
+    """
     # Look for short vectors
     # Elements of L are of the form (norm, [elements])
     p, spr = uv_params.p, uv_params.spr
     norm_bound = uv_params.norm_bound
-    L = ShortIdeals(R, N_R, norm_bound*spr, p, spr, uv_params.norm_cff_bound)
-    logger.info(f'{len(L) = }')
+    L = short_ideals(ideal, ideal_norm, norm_bound * spr, p, spr, uv_params.norm_cff_bound)
+    logger.info(f"{len(L) = }")
 
     # Remove allowed primes
-    ids = {}
+    ideals = {}
     for nI, I in L:
+        if gcd(nI, ideal_norm) > 1:
+            continue
         # Even exponents
         v2 = nI.valuation(2)
         nI //= 2**v2
 
-        k = nI / gcd(nI, uv_params.allowed_primes_prod)
-        while gcd(k, uv_params.allowed_primes_prod) != 1:
-            k /= gcd(k, uv_params.allowed_primes_prod)
+        smooth_part, rough_cofactor = remove_common_factors(nI, uv_params.allowed_primes_prod)
 
-        cof = nI/k
-        if k in ids and cof*2**v2 >= ids[k][0]*2**ids[k][1]:
+        if smooth_part in ideals and rough_cofactor * 2**v2 >= ideals[smooth_part][0] * 2 ** ideals[smooth_part][1]:
             # Multiple of a previous vector
             continue
-        ids[k] = (cof, v2, I)
+        ideals[smooth_part] = (rough_cofactor, v2, I)
 
     # Short vectors sorted by cofactor-free norm
-    ids = [(j,) + ids[j] for j in ids]
-    ids.sort()
+    ideals = [(j,) + ideals[j] for j in ideals]
+    ideals.sort()
 
-    two_parts = {}
-    two_left = ideal_to_sage([[2, 0], [-1/2, 1/2]], uv_params.max_order)
-    two_right = ideal_to_sage([[2, 0], [1/2, 1/2]], uv_params.max_order)
+    cached_two_signatures = {}
 
     # Keep track of the best solution found so far
     best_sol = None
     best_cost = None
-    sol_cnt = 0
-
-    def compute_two_sig(id_i, v2_i):
-        id_sage = ideal_to_sage(id_i, uv_params.max_order)
-        id_l = id_sage + two_left**v2_i
-        id_r = id_sage + two_right**v2_i
-        v2_l = valuation(id_l.norm(), 2)
-        v2_r = valuation(id_r.norm(), 2)
-        mul2 = min(v2_l, v2_r)
-        sig_i = (v2_l - mul2, v2_r - mul2)
-        return sig_i
+    sol_count = 0
 
     # Try pairs to solve the coin equation
-    for i, j in generate_combs(min(len(ids), uv_params.comb_bound)):
+    for i, j in ascending_combinations(min(len(ideals), uv_params.comb_bound)):
 
-        if uv_params.sol_bound and sol_cnt >= uv_params.sol_bound:
+        if uv_params.sol_bound and sol_count >= uv_params.sol_bound:
             break
-        n1, cof1, v2_1, id1 = ids[i]
-        n2, cof2, v2_2, id2 = ids[j]
-        if gcd(n1, n2) != 1:
+
+        norm_1, _, v2_1, ideal_1 = ideals[i]
+        norm_2, _, v2_2, ideal_2 = ideals[j]
+
+        if gcd(norm_1, norm_2) != 1:
             continue
 
         # Compute the part above two of the ideals
-        if i in two_parts:
-            sig_1 = two_parts[i]
+        if i in cached_two_signatures:
+            signature_1 = cached_two_signatures[i]
         else:
-            sig_1 = compute_two_sig(id1, v2_1)
-            two_parts[i] = sig_1
+            signature_1 = two_signature(ideal_1, v2_1, uv_params)
+            # Update cache
+            cached_two_signatures[i] = signature_1
 
-        if j in two_parts:
-            sig_2 = two_parts[j]
+        if j in cached_two_signatures:
+            signature_2 = cached_two_signatures[j]
         else:
-            sig_2 = compute_two_sig(id2, v2_2)
-            two_parts[j] = sig_2
+            signature_2 = two_signature(ideal_2, v2_2, uv_params)
+            # Update cache
+            cached_two_signatures[j] = signature_2
 
-        # Compute the remeaning torsion
-        used_torsion = abs(sig_1[0] - sig_2[0]) + abs(sig_1[1] - sig_2[1])
-        av_torsion = uv_params.uv_e - used_torsion
+        # Compute the remaining torsion
+        used_torsion = abs(signature_1[0] - signature_2[0]) + abs(signature_1[1] - signature_2[1])
+        remaining_torsion = uv_params.uv_e - used_torsion
 
         # Avoid generating too many combinations for a single pair
-        local_sol_ncnt = 0
-        for u, v, t in xsos_pair_generator(n1, n2, av_torsion,
-                                           uv_params.sos_allowed_primes,
-                                           n_squares=uv_params.n_squares):
-            sol_cnt += 1
-            local_sol_ncnt += 1
+        local_sol_count = 0
+
+        for (_, x_u, y_u, g_u), (_, x_v, y_v, g_v), t in sos_coins(
+            norm_1, norm_2, remaining_torsion, uv_params.sos_allowed_primes, n_squares=uv_params.n_squares
+        ):
+
+            assert g_u * (x_u ** 2 + y_u ** 2) * norm_1 + g_v * (x_v ** 2 + y_v ** 2) * norm_2 == 2**t
+
+            sol_count += 1
+            local_sol_count += 1
 
             if uv_params.sol_bound == 1:
-                return u, v, ids[i], ids[j], sig_1, sig_2, t
+                return (x_u, y_u, g_u), (x_v, y_v, g_v), ideals[i], ideals[j], signature_1, signature_2, t
 
             # Cost estimate for best solution
-            elkies_vals = [ids[i][1], ids[j][1]]
-            if type(u) in [tuple, list]:
-                elkies_vals.append(u[2])
-            if type(v) in [tuple, list]:
-                elkies_vals.append(v[2])
-            elkies_cost = eval_sol(elkies_vals, uv_params.allowed_primes)
-            if not best_sol or elkies_cost < best_cost:
-                best_sol = u, v, ids[i], ids[j], sig_1, sig_2, t
+            elkies_steps = []
+
+            # Append cost of elkies steps
+            # Recall: ideals[i] is a tuple (norm, cofactor, twoval, ideal)
+            # The cofactor is smooth, and constains the product of norms of elkies steps
+            elkies_steps.append(ideals[i][1])
+            elkies_steps.append(ideals[j][1])
+
+            elkies_steps.append(g_u)
+            elkies_steps.append(g_v)
+
+            # Recall: Elkies steps of norm prime are done for all primes in uv_params.allowed_primes
+            # We assume cost to be linear in the size of the prime
+            # We count the number of steps required by getting the sum of valuations for each ideal
+            elkies_cost = sum(
+                [prime * sum([valuation(value, prime) for value in elkies_steps]) for prime in uv_params.allowed_primes]
+            )
+
+            if not best_sol or not best_cost or elkies_cost < best_cost:
+                best_sol = (x_u, y_u, g_u), (x_v, y_v, g_v), ideals[i], ideals[j], signature_1, signature_2, t
                 best_cost = elkies_cost
-            if sol_cnt >= uv_params.sol_bound:
+
+            if sol_count >= uv_params.sol_bound:
                 break
-            if local_sol_ncnt > 3: # TODO: this is completely arbitrary
+
+            # @TODO: this is completely arbitrary
+            if local_sol_count > 3:
                 break
 
     return best_sol
-

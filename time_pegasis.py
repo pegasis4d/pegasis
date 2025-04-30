@@ -27,12 +27,12 @@ if __name__ == "__main__":
 
     # Arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument("-p", type=int, help="Prime size", choices=(500, 1000, 1500, 2000, 4000), default=500)
+    parser.add_argument("-p", type=int, help="Prime size", choices=(100, 500, 1000, 1500, 2000, 4000), default=500)
     parser.add_argument("--nruns", type=int, help="Number of runs", default=5)
     parser.add_argument("--runname", type=str, help="Run name", default="run")
     parser.add_argument("--precompute", action=argparse.BooleanOptionalAction)
     args = parser.parse_args()
-    assert args.p in [500, 1000, 1500, 2000, 4000]
+    assert args.p in [100, 500, 1000, 1500, 2000, 4000]
 
     EGA = PEGASIS(args.p)
     if args.precompute:

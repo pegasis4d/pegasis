@@ -2,6 +2,7 @@ from sage.all import *
 
 import coin
 import const_precomp
+from ideals import ideal_to_sage
 
 class UV_params:
     """
@@ -49,7 +50,9 @@ class UV_params:
 
     def __init__(self, level, params=None):
         level = int(level)
-        if level == 500:
+        if level == 100:
+            self.init_100()
+        elif level == 500:
             self.init_500()
         elif level == 1000:
             self.init_1000()
@@ -86,10 +89,21 @@ class UV_params:
         self.n_squares = 2
         self.sol_bound = 1
 
+        self.two_left = ideal_to_sage([[2, 0], [-1 / 2, 1 / 2]], self.max_order)
+        self.two_right = ideal_to_sage([[2, 0], [1 / 2, 1 / 2]], self.max_order)
+
         # Optional parameter update
         if params:
             for p_key, p_val in params.items():
                 setattr(self,p_key,p_value)
+
+    def init_100(self):
+        self.f = 77
+        self.e = 100
+        self.p = self.f * 2**self.e - 1
+        self.A = 86576444069281248423336823187435
+        allowed_primes = [5, 7, 11]
+        self.allowed_primes = [ZZ(li) for li in allowed_primes]
 
     def init_500(self):
         self.f = 33
