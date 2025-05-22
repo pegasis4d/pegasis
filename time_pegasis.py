@@ -5,7 +5,8 @@ import itertools
 from time import time
 
 from pegasis import PEGASIS
-from theta_lib.utilities.strategy import precompute_strategy_with_first_eval_and_splitting as precompute
+#from theta_lib.utilities.strategy import precompute_strategy_with_first_eval_and_splitting as precompute
+from Theta_dim4.Theta_dim4_sage.pkg.utilities.strategy import precompute_strategy_with_first_eval as precompute
 
 
 def precompute_strategies(emax):

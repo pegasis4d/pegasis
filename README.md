@@ -95,7 +95,7 @@ logging.getLogger("lcsidh").setLevel(logging.INFO)
 
 ## Project structure
 
-- `theta_lib`: code for computing with 4D isogenies;
+- `Theta_dim4`: code for computing with 4D isogenies imported as a submodule from <https://github.com/Pierrick-Dartois/Theta_dim4>
 - `pegasis.py`: contains `PEGASIS`, the main class running the algorithm
 - `coin.py`: utilities to solve the norm equation with u and v sums of squares
 - `const_precomp.py`: precomputed constants for trial division
@@ -106,3 +106,17 @@ logging.getLogger("lcsidh").setLevel(logging.INFO)
 - `uv_params.py`: contains the parameters for solving the norm equation
   ("finding uv")
 - `test_vectors.txt`: contains test vectors for verification
+
+## License
+
+See [LICENSE](LICENSE)
+
+Copyright 2025
+
+Pierrick Dartois, Jonathan Komada Eriksen, Tako Boris Fouotsa, Arthur Herlédan
+Le Merdy, Riccardo Invernizzi, Damien Robert, Ryan Rueger, Frederik Vercauteren,
+Benjamin Wesolowski
+
+Third party code is used in this library: 
+
+- `Theta_dim4`; Apache 2.0: "Copyright (c) 2025 Pierrick Dartois"

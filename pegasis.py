@@ -9,7 +9,8 @@ from uv_params import UV_params
 from ideals import ideal_to_sage, PrincipalGenerator, Conjugate, RandomDegreeOnePrimeIdeal
 from elkies import Elkies
 
-from theta_lib.isogenies.Kani_clapoti import KaniClapotiIsog
+#from theta_lib.isogenies.Kani_clapoti import KaniClapotiIsog
+from Theta_dim4.Theta_dim4_sage.pkg.isogenies.Kani_clapoti import KaniClapotiIsog
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.WARNING)
